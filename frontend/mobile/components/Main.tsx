@@ -3,9 +3,10 @@ import { View, Text, StyleSheet } from 'react-native'
 import { Session } from '@supabase/supabase-js'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 import Icon from 'react-native-vector-icons/Ionicons'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import Feed from './Feed'
 import PastTrips from './PastTrips'
-import NewTrip from './NewTrip'
+import Trip from './Trip'
 import Map from './Map'
 import Profile from './Profile'
 
@@ -16,8 +17,10 @@ interface MainProps {
 const Tab = createBottomTabNavigator()
 
 export default function Main({ session }: MainProps) {
+  const insets = useSafeAreaInsets()
+  
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Wander</Text>
       </View>
@@ -31,8 +34,8 @@ export default function Main({ session }: MainProps) {
               iconName = focused ? 'home' : 'home-outline'
             } else if (route.name === 'PastTrips') {
               iconName = focused ? 'time' : 'time-outline'
-            } else if (route.name === 'NewTrip') {
-              iconName = focused ? 'add-circle' : 'add-circle-outline'
+            } else if (route.name === 'Trip') {
+              iconName = focused ? 'airplane' : 'airplane-outline'
             } else if (route.name === 'Map') {
               iconName = focused ? 'map' : 'map-outline'
             } else if (route.name === 'Profile') {
@@ -50,9 +53,9 @@ export default function Main({ session }: MainProps) {
             backgroundColor: '#fff',
             borderTopWidth: 1,
             borderTopColor: '#E5E5EA',
-            paddingBottom: 5,
+            paddingBottom: insets.bottom,
             paddingTop: 5,
-            height: 60,
+            height: 60 + insets.bottom,
           },
           tabBarLabelStyle: {
             fontSize: 12,
@@ -67,9 +70,9 @@ export default function Main({ session }: MainProps) {
           options={{ title: 'Past Trips' }}
         />
         <Tab.Screen 
-          name="NewTrip" 
-          component={NewTrip}
-          options={{ title: 'New Trip' }}
+          name="Trip" 
+          component={Trip}
+          options={{ title: 'Trip' }}
         />
         <Tab.Screen name="Map" component={Map} />
         <Tab.Screen 
@@ -77,7 +80,7 @@ export default function Main({ session }: MainProps) {
           children={() => <Profile session={session} />}
         />
       </Tab.Navigator>
-    </View>
+    </SafeAreaView>
   )
 }
 
@@ -88,7 +91,6 @@ const styles = StyleSheet.create({
   },
   header: {
     backgroundColor: '#fff',
-    paddingTop: 50,
     paddingBottom: 15,
     paddingHorizontal: 20,
     borderBottomWidth: 1,

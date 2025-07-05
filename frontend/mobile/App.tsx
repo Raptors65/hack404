@@ -6,6 +6,7 @@ import Main from './components/Main'
 import { View, Text } from 'react-native'
 import { Session } from '@supabase/supabase-js'
 import { NavigationContainer } from '@react-navigation/native'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -21,12 +22,14 @@ export default function App() {
   }, [])
 
   return (
-    <NavigationContainer>
-      {session && session.user ? (
-        <Main session={session} />
-      ) : (
-        <Auth />
-      )}
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer>
+        {session && session.user ? (
+          <Main session={session} />
+        ) : (
+          <Auth />
+        )}
+      </NavigationContainer>
+    </SafeAreaProvider>
   )
 }
