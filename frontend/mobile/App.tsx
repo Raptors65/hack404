@@ -22,13 +22,11 @@ export default function App() {
 
   return (
     <NavigationContainer>
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-        {session && session.user ? (
-          <Main session={session} />
-        ) : (
-          <Auth />
-        )}
-      </View>
+      {session && session.user ? (
+        <Main session={session} />
+      ) : (
+        <Auth />
+      )}
     </NavigationContainer>
   )
 }
