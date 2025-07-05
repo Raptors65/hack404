@@ -5,6 +5,7 @@ import Auth from './components/Auth'
 import Main from './components/Main'
 import { View, Text } from 'react-native'
 import { Session } from '@supabase/supabase-js'
+import { NavigationContainer } from '@react-navigation/native'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -20,12 +21,14 @@ export default function App() {
   }, [])
 
   return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-      {session && session.user ? (
-        <Main session={session} />
-      ) : (
-        <Auth />
-      )}
-    </View>
+    <NavigationContainer>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+        {session && session.user ? (
+          <Main session={session} />
+        ) : (
+          <Auth />
+        )}
+      </View>
+    </NavigationContainer>
   )
 }

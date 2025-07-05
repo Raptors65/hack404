@@ -8,10 +8,38 @@ import Friends from './Friends'
 import Plan from './Plan'
 import Map from './Map'
 import Review from './Review'
+import ReviewDetail from './ReviewDetail'
 import { mainStyle } from './Styles'
+import { NavigationContainer } from '@react-navigation/native'
+import { createNativeStackNavigator } from '@react-navigation/native-stack'
 
 interface MainProps {
   session: Session
+}
+
+const Stack = createNativeStackNavigator()
+
+function ReviewStack() {
+  return (
+    <Stack.Navigator>
+      <Stack.Screen 
+        name="ReviewList" 
+        component={Review} 
+        options={{ headerShown: false }}
+      />
+      <Stack.Screen 
+        name="ReviewDetail" 
+        component={ReviewDetail} 
+        options={{ 
+          title: 'Write Review',
+          headerStyle: {
+            backgroundColor: '#fff',
+          },
+          headerTintColor: '#333',
+        }}
+      />
+    </Stack.Navigator>
+  )
 }
 
 export default function Main({ session }: MainProps) {
@@ -32,7 +60,7 @@ export default function Main({ session }: MainProps) {
       case 'map':
         return <Map />
       case 'review':
-        return <Review />
+        return <ReviewStack />
     }
   }
 
