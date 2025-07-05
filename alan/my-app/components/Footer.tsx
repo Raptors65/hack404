@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet, Dimensions } from 'react-native'
-
-export type TabType = 'home' | 'friends' | 'plan' | 'map' | 'review'
+import { TabType } from './Types'
 
 interface FooterProps {
   activeTab?: TabType

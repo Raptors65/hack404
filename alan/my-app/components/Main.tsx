@@ -1,6 +1,7 @@
 import { View, Text } from 'react-native'
 import { Session } from '@supabase/supabase-js'
-import Footer, { TabType } from './Footer'
+import Footer from './Footer'
+import { TabType } from './Types'
 import { useState } from 'react'    
 import Home from './Home'
 import Friends from './Friends'
