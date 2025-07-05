@@ -16,6 +16,56 @@ conn = psycopg2.connect(
 )
 cursor = conn.cursor()
 
+
+@app.route('/add_review', methods=['POST'])
+def add_review():
+    data = request.get_json()
+    review_id = data.get('review_id')
+    user_id = data.get('user_id')
+    place_id = data.get('place_id')
+    rating = data.get('rating')
+    comment = data.get('comment')
+
+    try:
+        cursor.execute("""
+            INSERT INTO reviews (review_id, user_id, place_id, rating, comment)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (review_id, user_id, place_id, rating, comment))
+        conn.commit()
+        return jsonify({"message": "Review added successfully"}), 201
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    
+
+@app.route('/get_reviews', methods=['GET'])
+def get_reviews():
+    place_id = request.args.get('place_id')  # GET params, not JSON body
+    if not place_id:
+        return jsonify({"error": "Missing place_id"}), 400
+
+    try:
+        cursor.execute("""
+            SELECT id, user_id, place_id, score, comment
+            FROM ratings
+            WHERE place_id = %s;
+        """, (place_id,))
+        rows = cursor.fetchall()
+        reviews = [
+            {
+                "review_id": row[0],
+                "user_id": row[1],
+                "place_id": row[2],
+                "score": row[3],
+                "comment": row[4]
+            }
+            for row in rows
+        ]
+        return jsonify({"reviews": reviews}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 # add friend
 @app.route('/add_friend', methods=['POST'])
 def add_friend():
