@@ -300,7 +300,9 @@ export default function Trip() {
           place_id: selectedPlace.place_id,
           place_name: selectedPlace.name,
           rating: userRating,
-          comment: userComment
+          comment: userComment,
+          latitude: selectedPlace.location.lat,
+          longitude: selectedPlace.location.lng
         }),
       })
 

@@ -53,9 +53,9 @@ export default function Main({ session }: MainProps) {
             backgroundColor: '#fff',
             borderTopWidth: 1,
             borderTopColor: '#E5E5EA',
-            paddingBottom: insets.bottom,
+            paddingBottom: Math.max(5, insets.bottom - 35),
             paddingTop: 5,
-            height: 60 + insets.bottom,
+            height: 60 + Math.max(5, insets.bottom - 35),
           },
           tabBarLabelStyle: {
             fontSize: 12,
