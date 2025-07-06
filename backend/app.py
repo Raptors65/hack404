@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import requests
+import uuid
 from dotenv import load_dotenv
 from functools import wraps
 from supabase import create_client, Client
@@ -80,6 +81,97 @@ def add_review():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+
+@app.route('/rate_place', methods=['POST'])
+@require_auth
+def rate_place():
+    """Rate a place with a simple rating (1-10) and optional comment"""
+    data = request.get_json()
+    user_id = request.user_id
+    place_id = data.get('place_id')
+    rating = data.get('rating')
+    comment = data.get('comment', '')  # Optional comment
+    
+    # Validate required fields
+    if not all([place_id, rating]):
+        return jsonify({"error": "Missing required fields: place_id, rating"}), 400
+    
+    # Validate rating range
+    if not isinstance(rating, int) or rating < 1 or rating > 10:
+        return jsonify({"error": "Rating must be an integer between 1 and 10"}), 400
+    
+    try:
+        # Check if user already rated this place
+        existing_review = supabase.table('reviews').select('id, review_id').eq(
+            'user_id', user_id
+        ).eq('place_id', place_id).execute()
+        
+        if existing_review.data:
+            # Update existing review
+            review_id = existing_review.data[0]['review_id']
+            result = supabase.table('reviews').update({
+                'rating': rating,
+                'comment': comment
+            }).eq('review_id', review_id).execute()
+            
+            return jsonify({
+                "message": "Rating updated successfully",
+                "data": result.data[0],
+                "action": "updated"
+            }), 200
+        else:
+            # Create new review with generated review_id
+            review_id = str(uuid.uuid4())
+            
+            result = supabase.table('reviews').insert({
+                'review_id': review_id,
+                'user_id': user_id,
+                'place_id': place_id,
+                'rating': rating,
+                'comment': comment
+            }).execute()
+            
+            return jsonify({
+                "message": "Rating added successfully",
+                "data": result.data[0],
+                "action": "created"
+            }), 201
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/get_user_rating', methods=['GET'])
+@require_auth
+def get_user_rating():
+    """Get the current user's rating for a specific place"""
+    place_id = request.args.get('place_id')
+    user_id = request.user_id
+    
+    if not place_id:
+        return jsonify({"error": "Missing place_id"}), 400
+    
+    try:
+        # Get user's rating for this place
+        result = supabase.table('reviews').select(
+            'rating, comment, created_at, updated_at'
+        ).eq('place_id', place_id).eq('user_id', user_id).execute()
+        
+        if result.data:
+            rating_data = result.data[0]
+            return jsonify({
+                "has_rating": True,
+                "rating": rating_data['rating'],
+                "comment": rating_data['comment'],
+                "created_at": rating_data['created_at'],
+                "updated_at": rating_data['updated_at']
+            }), 200
+        else:
+            return jsonify({"has_rating": False}), 200
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route('/get_reviews', methods=['GET'])
 def get_reviews():
@@ -332,113 +424,179 @@ def end_trip():
 @app.route('/trip/recommendations', methods=['GET'])
 @require_auth
 def get_recommendations():
-    """Get place recommendations for a city (hardcoded for now)"""
-    city = request.args.get('city', '').lower()
+    """Get place recommendations for a city using Google Places API"""
+    city = request.args.get('city', '').strip()
     
-    # Hardcoded recommendations for common cities
-    recommendations = {
-        'new york': [
-            {
-                'name': 'Central Park',
-                'description': 'Beautiful urban park in the heart of Manhattan',
-                'category': 'Park',
-                'rating': 4.8,
-                'image_url': 'https://images.unsplash.com/photo-1520637836862-4d197d17c91a?w=300&h=200&fit=crop'
-            },
-            {
-                'name': 'Times Square',
-                'description': 'Famous commercial intersection and tourist destination',
-                'category': 'Landmark',
-                'rating': 4.2,
-                'image_url': 'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?w=300&h=200&fit=crop'
-            },
-            {
-                'name': 'Brooklyn Bridge',
-                'description': 'Historic bridge connecting Manhattan and Brooklyn',
-                'category': 'Landmark',
-                'rating': 4.7,
-                'image_url': 'https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=300&h=200&fit=crop'
-            }
-        ],
-        'paris': [
-            {
-                'name': 'Eiffel Tower',
-                'description': 'Iconic iron lattice tower and symbol of Paris',
-                'category': 'Landmark',
-                'rating': 4.6,
-                'image_url': 'https://images.unsplash.com/photo-1511739001486-6bfe10ce785f?w=300&h=200&fit=crop'
-            },
-            {
-                'name': 'Louvre Museum',
-                'description': 'World famous art museum and historic monument',
-                'category': 'Museum',
-                'rating': 4.8,
-                'image_url': 'https://images.unsplash.com/photo-1566139884294-a7e1ccb6e8c6?w=300&h=200&fit=crop'
-            },
-            {
-                'name': 'Notre-Dame Cathedral',
-                'description': 'Medieval Catholic cathedral and architectural masterpiece',
-                'category': 'Architecture',
-                'rating': 4.7,
-                'image_url': 'https://images.unsplash.com/photo-1539650116574-75c0c6d0e66b?w=300&h=200&fit=crop'
-            }
-        ],
-        'tokyo': [
-            {
-                'name': 'Senso-ji Temple',
-                'description': 'Ancient Buddhist temple in Asakusa',
-                'category': 'Temple',
-                'rating': 4.5,
-                'image_url': 'https://images.unsplash.com/photo-1545569341-9eb8b30979d9?w=300&h=200&fit=crop'
-            },
-            {
-                'name': 'Shibuya Crossing',
-                'description': 'Busiest pedestrian crossing in the world',
-                'category': 'Landmark',
-                'rating': 4.3,
-                'image_url': 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=300&h=200&fit=crop'
-            },
-            {
-                'name': 'Tokyo Skytree',
-                'description': 'Broadcasting tower and observation deck',
-                'category': 'Landmark',
-                'rating': 4.4,
-                'image_url': 'https://images.unsplash.com/photo-1513407030348-c983a97b98d8?w=300&h=200&fit=crop'
-            }
-        ]
-    }
+    if not city:
+        return jsonify({"error": "Missing required parameter: city"}), 400
     
-    # Default recommendations if city not found
-    default_recommendations = [
-        {
-            'name': 'City Center',
-            'description': 'Explore the heart of the city',
-            'category': 'Area',
-            'rating': 4.2,
-            'image_url': 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=300&h=200&fit=crop'
-        },
-        {
-            'name': 'Local Market',
-            'description': 'Experience local culture and cuisine',
-            'category': 'Market',
-            'rating': 4.5,
-            'image_url': 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=300&h=200&fit=crop'
-        },
-        {
-            'name': 'Historic District',
-            'description': 'Discover the city\'s rich history',
-            'category': 'Historic',
-            'rating': 4.3,
-            'image_url': 'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=300&h=200&fit=crop'
+    try:
+        # First, get coordinates for the city using Geocoding API
+        geocoding_url = "https://maps.googleapis.com/maps/api/geocode/json"
+        geocoding_params = {
+            'address': city,
+            'key': GOOGLE_MAPS_API_KEY
         }
-    ]
-    
-    city_recommendations = recommendations.get(city, default_recommendations)
-    
-    return jsonify({
-        "city": city.title(),
-        "recommendations": city_recommendations
-    }), 200
+        
+        geocoding_response = requests.get(geocoding_url, params=geocoding_params)
+        geocoding_response.raise_for_status()
+        geocoding_data = geocoding_response.json()
+        
+        if geocoding_data.get('status') != 'OK' or not geocoding_data.get('results'):
+            return jsonify({
+                "error": f"Could not find location for city: {city}",
+                "details": geocoding_data.get('error_message', 'City not found')
+            }), 404
+        
+        # Get the coordinates of the city
+        location = geocoding_data['results'][0]['geometry']['location']
+        lat = location['lat']
+        lng = location['lng']
+        formatted_address = geocoding_data['results'][0]['formatted_address']
+        
+        # Search for tourist attractions in the city
+        places_url = f"{PLACES_API_BASE_URL}/nearbysearch/json"
+        places_params = {
+            'location': f"{lat},{lng}",
+            'radius': '10000',  # 10km radius
+            'type': 'tourist_attraction',
+            'key': GOOGLE_MAPS_API_KEY
+        }
+        
+        places_response = requests.get(places_url, params=places_params)
+        places_response.raise_for_status()
+        places_data = places_response.json()
+        
+        if places_data.get('status') != 'OK':
+            return jsonify({
+                "error": f"Google Places API error: {places_data.get('status')}",
+                "details": places_data.get('error_message', 'No error details provided')
+            }), 500
+        
+        # Get user's friends to check for their ratings
+        user_id = request.user_id
+        friends = []
+        
+        try:
+            # Get friends where user is person_1_id
+            result1 = supabase.table('friends').select(
+                'person_2_id'
+            ).eq('person_1_id', user_id).execute()
+            
+            # Get friends where user is person_2_id
+            result2 = supabase.table('friends').select(
+                'person_1_id'
+            ).eq('person_2_id', user_id).execute()
+            
+            # Collect friend IDs
+            friend_ids = []
+            for row in result1.data:
+                friend_ids.append(row['person_2_id'])
+            for row in result2.data:
+                friend_ids.append(row['person_1_id'])
+                
+            # Get friend details (email) for display
+            if friend_ids:
+                friends_details = supabase.table('users').select(
+                    'id, email'
+                ).in_('id', friend_ids).execute()
+                
+                friends = {friend['id']: friend['email'] for friend in friends_details.data}
+                
+        except Exception as e:
+            # If friend lookup fails, continue without friend indicators
+            friends = {}
+        
+        # Format the recommendations
+        recommendations = []
+        for place in places_data.get('results', [])[:10]:  # Limit to 10 results
+            # Map Google Places types to our categories
+            place_types = place.get('types', [])
+            category = 'Attraction'
+            if 'museum' in place_types:
+                category = 'Museum'
+            elif 'park' in place_types:
+                category = 'Park'
+            elif 'church' in place_types or 'place_of_worship' in place_types:
+                category = 'Religious Site'
+            elif 'shopping_mall' in place_types or 'store' in place_types:
+                category = 'Shopping'
+            elif 'restaurant' in place_types or 'food' in place_types:
+                category = 'Restaurant'
+            elif any(t in place_types for t in ['landmark', 'point_of_interest']):
+                category = 'Landmark'
+            
+            # Get photo URL if available
+            photo_url = None
+            if place.get('photos'):
+                photo_reference = place['photos'][0]['photo_reference']
+                photo_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference={photo_reference}&key={GOOGLE_MAPS_API_KEY}"
+            
+            # Check if friends liked this place (rating >= 8)
+            friends_who_liked = []
+            place_id = place.get('place_id')
+            
+            if friends and place_id:
+                try:
+                    # Get reviews for this place from friends with high ratings
+                    friend_reviews = supabase.table('reviews').select(
+                        'user_id, rating'
+                    ).eq('place_id', place_id).in_('user_id', list(friends.keys())).gte('rating', 8).execute()
+                    
+                    for review in friend_reviews.data:
+                        friend_id = review['user_id']
+                        if friend_id in friends:
+                            # Get first name from email (everything before @)
+                            friend_email = friends[friend_id]
+                            friend_name = friend_email.split('@')[0].title()
+                            friends_who_liked.append({
+                                'id': friend_id,
+                                'name': friend_name,
+                                'email': friend_email,
+                                'rating': review['rating']
+                            })
+                            
+                except Exception as e:
+                    # If review lookup fails, continue without friend indicators
+                    pass
+            
+            # Create friend indicator text
+            friend_indicator = None
+            if friends_who_liked:
+                count = len(friends_who_liked)
+                if count == 1:
+                    friend_indicator = f"{friends_who_liked[0]['name']} liked this place"
+                elif count == 2:
+                    friend_indicator = f"{friends_who_liked[0]['name']} and {friends_who_liked[1]['name']} liked this place"
+                else:
+                    friend_indicator = f"{friends_who_liked[0]['name']} and {count - 1} others liked this place"
+            
+            recommendation = {
+                'place_id': place_id,
+                'name': place.get('name'),
+                'description': place.get('vicinity', ''),
+                'category': category,
+                'rating': place.get('rating'),
+                'user_ratings_total': place.get('user_ratings_total'),
+                'image_url': photo_url,
+                'location': place.get('geometry', {}).get('location', {}),
+                'friends_who_liked': friends_who_liked,
+                'friend_indicator': friend_indicator
+            }
+            recommendations.append(recommendation)
+        
+        return jsonify({
+            "city": city.title(),
+            "formatted_address": formatted_address,
+            "location": {"lat": lat, "lng": lng},
+            "recommendations": recommendations,
+            "total_results": len(recommendations)
+        }), 200
+        
+    except requests.RequestException as e:
+        return jsonify({"error": f"Failed to fetch recommendations: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 @app.route('/attractions', methods=['GET'])
 def get_attractions():
     """Get attractions near the user's location using Google Places API"""

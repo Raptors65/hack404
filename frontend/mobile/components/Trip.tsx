@@ -7,7 +7,8 @@ import {
   TextInput, 
   TouchableOpacity,
   Alert,
-  Image
+  Image,
+  Modal
 } from 'react-native'
 import { supabase } from '../lib/supabase'
 
@@ -20,11 +21,25 @@ interface Trip {
 }
 
 interface Recommendation {
+  place_id: string
   name: string
   description: string
   category: string
   rating: number
+  user_ratings_total: number
   image_url: string
+  location: {
+    lat: number
+    lng: number
+  }
+  friends_who_liked: Array<{
+    id: string
+    name: string
+    email: string
+    rating: number
+  }>
+  friend_indicator: string | null
+  user_rating?: number | null
 }
 
 interface PopularDestination {
@@ -41,6 +56,16 @@ export default function Trip() {
   const [searchCity, setSearchCity] = useState('')
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
   const [loadingRecommendations, setLoadingRecommendations] = useState(false)
+  const [showRatingModal, setShowRatingModal] = useState(false)
+  const [selectedPlace, setSelectedPlace] = useState<Recommendation | null>(null)
+  const [userRating, setUserRating] = useState(0)
+  const [userComment, setUserComment] = useState('')
+  const [submittingRating, setSubmittingRating] = useState(false)
+
+  // Helper function to format numbers with thousands separators
+  const formatNumber = (num: number): string => {
+    return num.toLocaleString()
+  }
   
   const popularDestinations: PopularDestination[] = [
     {
@@ -122,7 +147,32 @@ export default function Trip() {
       const result = await response.json()
       
       if (response.ok) {
-        setRecommendations(result.recommendations || [])
+        const recommendationsWithUserRatings = await Promise.all(
+          (result.recommendations || []).map(async (rec: Recommendation) => {
+            try {
+              // Check if user has already rated this place
+              const userRatingResponse = await fetch(`http://127.0.0.1:5001/get_user_rating?place_id=${encodeURIComponent(rec.place_id)}`, {
+                method: 'GET',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${session.access_token}`,
+                },
+              })
+              
+              const userRatingResult = await userRatingResponse.json()
+              
+              return {
+                ...rec,
+                user_rating: userRatingResult.has_rating ? userRatingResult.rating : null
+              }
+            } catch (error) {
+              // If error checking user rating, just return the recommendation without user rating
+              return { ...rec, user_rating: null }
+            }
+          })
+        )
+        
+        setRecommendations(recommendationsWithUserRatings)
       } else {
         Alert.alert('Error', `Failed to load recommendations: ${JSON.stringify(result)}`)
       }
@@ -212,6 +262,77 @@ export default function Trip() {
     startTrip(destination.city, destination.country)
   }
 
+  const handleRecommendationPress = async (recommendation: Recommendation) => {
+    // Prevent rating if user has already rated this place
+    if (recommendation.user_rating !== null && recommendation.user_rating !== undefined) {
+      Alert.alert(
+        'Already Rated', 
+        `You've already rated this place ${recommendation.user_rating}/10. Ratings cannot be changed once submitted.`,
+        [{ text: 'OK' }]
+      )
+      return
+    }
+
+    setSelectedPlace(recommendation)
+    setUserRating(0)
+    setUserComment('')
+    setShowRatingModal(true)
+  }
+
+  const submitRating = async () => {
+    if (!selectedPlace || userRating === 0) {
+      Alert.alert('Error', 'Please select a rating')
+      return
+    }
+
+    setSubmittingRating(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const response = await fetch('http://127.0.0.1:5001/rate_place', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          place_id: selectedPlace.place_id,
+          rating: userRating,
+          comment: userComment
+        }),
+      })
+
+      const result = await response.json()
+      
+      if (response.ok) {
+        Alert.alert('Success', result.message)
+        setShowRatingModal(false)
+        setSelectedPlace(null)
+        setUserRating(0)
+        setUserComment('')
+        
+        // Refresh recommendations to update friend indicators
+        if (currentTrip) {
+          loadRecommendations(currentTrip.city)
+        }
+      } else {
+        Alert.alert('Error', result.error || 'Failed to submit rating')
+      }
+    } catch (error) {
+      Alert.alert('Error', `Network error: ${error}`)
+    } finally {
+      setSubmittingRating(false)
+    }
+  }
+
+  const closeRatingModal = () => {
+    setShowRatingModal(false)
+    setSelectedPlace(null)
+    setUserRating(0)
+    setUserComment('')
+  }
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -250,7 +371,14 @@ export default function Trip() {
             ) : (
               <View style={styles.recommendationsContainer}>
                 {recommendations.map((rec, index) => (
-                  <View key={index} style={styles.recommendationCard}>
+                  <TouchableOpacity 
+                    key={index} 
+                    style={[
+                      styles.recommendationCard,
+                      rec.user_rating !== null && styles.recommendationCardRated
+                    ]}
+                    onPress={() => handleRecommendationPress(rec)}
+                  >
                     <Image 
                       source={{ uri: rec.image_url }} 
                       style={styles.recommendationImage}
@@ -259,9 +387,28 @@ export default function Trip() {
                       <Text style={styles.recommendationName}>{rec.name}</Text>
                       <Text style={styles.recommendationCategory}>{rec.category}</Text>
                       <Text style={styles.recommendationDescription}>{rec.description}</Text>
-                      <Text style={styles.recommendationRating}>★ {rec.rating}/5</Text>
+                      <View style={styles.recommendationFooter}>
+                        <Text style={styles.recommendationRating}>
+                          ★ {rec.rating ? rec.rating.toFixed(1) : 'N/A'}
+                          {rec.user_ratings_total && rec.user_ratings_total > 0 && (
+                            ` (${formatNumber(rec.user_ratings_total)} reviews)`
+                          )}
+                        </Text>
+                        {rec.user_rating !== null ? (
+                          <Text style={styles.userRatedText}>
+                            You rated: {rec.user_rating}/10
+                          </Text>
+                        ) : (
+                          <Text style={styles.tapToRate}>Tap to rate</Text>
+                        )}
+                      </View>
+                      {rec.friend_indicator && (
+                        <Text style={styles.friendIndicator}>
+                          👥 {rec.friend_indicator}
+                        </Text>
+                      )}
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
@@ -317,6 +464,82 @@ export default function Trip() {
           </View>
         )}
       </View>
+      
+      {/* Rating Modal */}
+      <Modal
+        visible={showRatingModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={closeRatingModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Rate this place</Text>
+              <TouchableOpacity onPress={closeRatingModal} style={styles.modalCloseButton}>
+                <Text style={styles.modalCloseButtonText}>×</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {selectedPlace && (
+              <View style={styles.modalContent}>
+                <Text style={styles.modalPlaceName}>{selectedPlace.name}</Text>
+                <Text style={styles.modalPlaceCategory}>{selectedPlace.category}</Text>
+                
+                <Text style={styles.ratingLabel}>Your Rating (1-10):</Text>
+                <View style={styles.ratingContainer}>
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((rating) => (
+                    <TouchableOpacity
+                      key={rating}
+                      style={[
+                        styles.ratingButton,
+                        userRating === rating && styles.ratingButtonSelected
+                      ]}
+                      onPress={() => setUserRating(rating)}
+                    >
+                      <Text style={[
+                        styles.ratingButtonText,
+                        userRating === rating && styles.ratingButtonTextSelected
+                      ]}>
+                        {rating}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                
+                <Text style={styles.commentLabel}>Comment (optional):</Text>
+                <TextInput
+                  style={styles.commentInput}
+                  value={userComment}
+                  onChangeText={setUserComment}
+                  placeholder="Share your thoughts about this place..."
+                  multiline
+                  numberOfLines={3}
+                />
+                
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={styles.cancelButton}
+                    onPress={closeRatingModal}
+                  >
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity
+                    style={[styles.submitButton, submittingRating && styles.submitButtonDisabled]}
+                    onPress={submitRating}
+                    disabled={submittingRating || userRating === 0}
+                  >
+                    <Text style={styles.submitButtonText}>
+                      {submittingRating ? 'Submitting...' : 'Submit Rating'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   )
 }
@@ -475,6 +698,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  recommendationCardRated: {
+    backgroundColor: '#f8f9ff',
+    borderWidth: 2,
+    borderColor: '#007AFF',
+    opacity: 0.8,
+  },
   recommendationImage: {
     width: '100%',
     height: 160,
@@ -503,5 +732,165 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#FF9500',
     fontWeight: '500',
+  },
+  recommendationFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  tapToRate: {
+    fontSize: 12,
+    color: '#007AFF',
+    fontStyle: 'italic',
+  },
+  userRatedText: {
+    fontSize: 12,
+    color: '#34C759',
+    fontWeight: '600',
+  },
+  friendIndicator: {
+    fontSize: 12,
+    color: '#34C759',
+    fontWeight: '500',
+    backgroundColor: '#E8F5E8',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 0,
+    margin: 20,
+    maxHeight: '80%',
+    width: '90%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  modalCloseButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseButtonText: {
+    fontSize: 20,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  modalContent: {
+    padding: 20,
+  },
+  modalPlaceName: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 4,
+  },
+  modalPlaceCategory: {
+    fontSize: 14,
+    color: '#007AFF',
+    marginBottom: 20,
+  },
+  ratingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 12,
+  },
+  ratingContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 20,
+  },
+  ratingButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  ratingButtonSelected: {
+    backgroundColor: '#007AFF',
+    borderColor: '#007AFF',
+  },
+  ratingButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  ratingButtonTextSelected: {
+    color: '#fff',
+  },
+  commentLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 8,
+  },
+  commentInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    textAlignVertical: 'top',
+    marginBottom: 20,
+    minHeight: 80,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#f0f0f0',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#666',
+  },
+  submitButton: {
+    flex: 1,
+    backgroundColor: '#007AFF',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  submitButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
 })
