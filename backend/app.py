@@ -293,26 +293,28 @@ def get_friends():
         # Add friends where user is person_1_id
         for row in result1.data:
             friend_details = supabase.table('users').select(
-                'id, email'
+                'id, email, name'
             ).eq('id', row['person_2_id']).execute()
             
             if friend_details.data:
                 friends.append({
                     "friend_id": row['person_2_id'],
                     "friend_email": friend_details.data[0]['email'],
+                    "friend_name": friend_details.data[0]['name'],
                     "friendship_created": row['created_at']
                 })
         
         # Add friends where user is person_2_id
         for row in result2.data:
             friend_details = supabase.table('users').select(
-                'id, email'
+                'id, email, name'
             ).eq('id', row['person_1_id']).execute()
             
             if friend_details.data:
                 friends.append({
                     "friend_id": row['person_1_id'],
                     "friend_email": friend_details.data[0]['email'],
+                    "friend_name": friend_details.data[0]['name'],
                     "friendship_created": row['created_at']
                 })
         
@@ -495,13 +497,13 @@ def get_recommendations():
             for row in result2.data:
                 friend_ids.append(row['person_1_id'])
                 
-            # Get friend details (email) for display
+            # Get friend details (email and name) for display
             if friend_ids:
                 friends_details = supabase.table('users').select(
-                    'id, email'
+                    'id, email, name'
                 ).in_('id', friend_ids).execute()
                 
-                friends = {friend['id']: friend['email'] for friend in friends_details.data}
+                friends = {friend['id']: {'email': friend['email'], 'name': friend['name']} for friend in friends_details.data}
                 
         except Exception as e:
             # If friend lookup fails, continue without friend indicators
@@ -546,13 +548,13 @@ def get_recommendations():
                     for review in friend_reviews.data:
                         friend_id = review['user_id']
                         if friend_id in friends:
-                            # Get first name from email (everything before @)
-                            friend_email = friends[friend_id]
-                            friend_name = friend_email.split('@')[0].title()
+                            friend_data = friends[friend_id]
+                            # Use the name field if available, otherwise fall back to extracting from email
+                            friend_name = friend_data['name'] if friend_data['name'] else friend_data['email'].split('@')[0].title()
                             friends_who_liked.append({
                                 'id': friend_id,
                                 'name': friend_name,
-                                'email': friend_email,
+                                'email': friend_data['email'],
                                 'rating': review['rating']
                             })
                             
@@ -757,6 +759,151 @@ def get_attraction_details():
         return jsonify({"error": f"Failed to fetch attraction details: {str(e)}"}), 500
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+@app.route('/feed', methods=['GET'])
+@require_auth
+def get_feed():
+    """Get feed data including featured lists and friend activity"""
+    user_id = request.user_id
+    
+    try:
+        # Get user's friends
+        friend_ids = []
+        
+        # Get friends where user is person_1_id
+        result1 = supabase.table('friends').select(
+            'person_2_id'
+        ).eq('person_1_id', user_id).execute()
+        
+        # Get friends where user is person_2_id
+        result2 = supabase.table('friends').select(
+            'person_1_id'
+        ).eq('person_2_id', user_id).execute()
+        
+        # Collect friend IDs
+        for row in result1.data:
+            friend_ids.append(row['person_2_id'])
+        for row in result2.data:
+            friend_ids.append(row['person_1_id'])
+        
+        # Get recent friend activity (reviews and completed trips)
+        friend_activity = []
+        
+        if friend_ids:
+            # Calculate date 30 days ago
+            from datetime import datetime, timedelta
+            thirty_days_ago = (datetime.now() - timedelta(days=30)).isoformat()
+            
+            # Get recent reviews from friends (last 30 days)
+            recent_reviews = supabase.table('reviews').select(
+                'user_id, place_id, rating, comment, created_at'
+            ).in_('user_id', friend_ids).gte(
+                'created_at', thirty_days_ago
+            ).order('created_at', desc=True).limit(20).execute()
+            
+            # Get recent completed trips from friends (last 30 days)
+            recent_trips = supabase.table('trips').select(
+                'user_id, city, country, start_date, end_date, created_at'
+            ).in_('user_id', friend_ids).eq('is_active', False).not_.is_(
+                'end_date', 'null'
+            ).gte('created_at', thirty_days_ago).order(
+                'end_date', desc=True
+            ).limit(20).execute()
+            
+            # Get user details for the activities
+            if friend_ids:
+                users_details = supabase.table('users').select(
+                    'id, email, name'
+                ).in_('id', friend_ids).execute()
+                
+                users_map = {user['id']: user for user in users_details.data}
+                
+                # Format review activities
+                for review in recent_reviews.data:
+                    user_data = users_map.get(review['user_id'])
+                    if user_data:
+                        friend_name = user_data['name'] if user_data['name'] else user_data['email'].split('@')[0].title()
+                        friend_activity.append({
+                            'type': 'review',
+                            'id': f"review_{review['user_id']}_{review['place_id']}_{review['created_at']}",
+                            'user_id': review['user_id'],
+                            'user_name': friend_name,
+                            'user_email': user_data['email'],
+                            'place_id': review['place_id'],
+                            'rating': review['rating'],
+                            'comment': review['comment'],
+                            'created_at': review['created_at']
+                        })
+                
+                # Format trip activities
+                for trip in recent_trips.data:
+                    user_data = users_map.get(trip['user_id'])
+                    if user_data:
+                        friend_name = user_data['name'] if user_data['name'] else user_data['email'].split('@')[0].title()
+                        friend_activity.append({
+                            'type': 'trip',
+                            'id': f"trip_{trip['user_id']}_{trip['created_at']}",
+                            'user_id': trip['user_id'],
+                            'user_name': friend_name,
+                            'user_email': user_data['email'],
+                            'city': trip['city'],
+                            'country': trip['country'],
+                            'start_date': trip['start_date'],
+                            'end_date': trip['end_date'],
+                            'created_at': trip['created_at']
+                        })
+        
+        # Sort all activities by creation date
+        friend_activity.sort(key=lambda x: x['created_at'], reverse=True)
+        
+        # Hardcoded featured lists for now
+        featured_lists = [
+            {
+                'id': 'nyc_nightlife',
+                'title': 'Best Places to Visit at Night in NYC',
+                'description': 'Discover the city that never sleeps',
+                'image_url': 'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?w=300&h=200&fit=crop',
+                'place_count': 12
+            },
+            {
+                'id': 'paris_cafes',
+                'title': 'Hidden Cafés in Paris',
+                'description': 'Local favorites off the beaten path',
+                'image_url': 'https://images.unsplash.com/photo-1511739001486-6bfe10ce785f?w=300&h=200&fit=crop',
+                'place_count': 8
+            },
+            {
+                'id': 'tokyo_temples',
+                'title': 'Sacred Temples in Tokyo',
+                'description': 'Find peace in the bustling city',
+                'image_url': 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=300&h=200&fit=crop',
+                'place_count': 15
+            },
+            {
+                'id': 'london_pubs',
+                'title': 'Historic Pubs in London',
+                'description': 'Where history meets great beer',
+                'image_url': 'https://images.unsplash.com/photo-1513635269975-59663e0ac1ad?w=300&h=200&fit=crop',
+                'place_count': 10
+            },
+            {
+                'id': 'la_beaches',
+                'title': 'Best Beaches in Los Angeles',
+                'description': 'Sun, surf, and endless summer vibes',
+                'image_url': 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=300&h=200&fit=crop',
+                'place_count': 7
+            }
+        ]
+        
+        return jsonify({
+            'featured_lists': featured_lists,
+            'friend_activity': friend_activity[:15],  # Limit to 15 most recent activities
+            'total_activities': len(friend_activity)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/health', methods=['GET'])

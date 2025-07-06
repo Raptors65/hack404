@@ -5,7 +5,9 @@ import { supabase } from '../lib/supabase'
 export default function Auth() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
+  const [isSignUp, setIsSignUp] = useState(false)
 
   async function signInWithEmail() {
     setLoading(true)
@@ -20,6 +22,14 @@ export default function Auth() {
 
   async function signUpWithEmail() {
     setLoading(true)
+    
+    // Validate name is provided for signup
+    if (!name.trim()) {
+      Alert.alert('Error', 'Please enter your name')
+      setLoading(false)
+      return
+    }
+    
     const {
       data: { session },
       error,
@@ -28,7 +38,29 @@ export default function Auth() {
       password: password,
     })
 
-    if (error) Alert.alert('Error', error.message)
+    if (error) {
+      Alert.alert('Error', error.message)
+      setLoading(false)
+      return
+    }
+
+    // If signup successful and we have a session, update the user's name
+    if (session?.user) {
+      try {
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({ name: name.trim() })
+          .eq('id', session.user.id)
+        
+        if (updateError) {
+          console.error('Error updating user name:', updateError)
+          // Don't show error to user since auth was successful
+        }
+      } catch (updateErr) {
+        console.error('Error updating user name:', updateErr)
+      }
+    }
+    
     if (!session) Alert.alert('Success', 'Please check your inbox for email verification!')
     setLoading(false)
   }
@@ -41,6 +73,19 @@ export default function Auth() {
       </View>
 
       <View style={styles.form}>
+        {isSignUp && (
+          <View style={styles.inputContainer}>
+            <Text style={styles.label}>Name</Text>
+            <TextInput
+              style={styles.input}
+              onChangeText={setName}
+              value={name}
+              placeholder="Your full name"
+              autoCapitalize="words"
+            />
+          </View>
+        )}
+        
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Email</Text>
           <TextInput
@@ -67,21 +112,21 @@ export default function Auth() {
 
         <TouchableOpacity
           style={[styles.button, styles.primaryButton]}
-          onPress={signInWithEmail}
+          onPress={isSignUp ? signUpWithEmail : signInWithEmail}
           disabled={loading}
         >
           <Text style={styles.buttonText}>
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? (isSignUp ? 'Signing up...' : 'Signing in...') : (isSignUp ? 'Sign Up' : 'Sign In')}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.button, styles.secondaryButton]}
-          onPress={signUpWithEmail}
+          onPress={() => setIsSignUp(!isSignUp)}
           disabled={loading}
         >
           <Text style={styles.secondaryButtonText}>
-            {loading ? 'Signing up...' : 'Sign Up'}
+            {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
           </Text>
         </TouchableOpacity>
       </View>
