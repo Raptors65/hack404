@@ -3,9 +3,11 @@ from flask_cors import CORS
 import os
 import requests
 import uuid
+import json
 from dotenv import load_dotenv
 from functools import wraps
 from supabase import create_client, Client
+from openai import OpenAI
 
 load_dotenv()
 
@@ -15,6 +17,9 @@ CORS(app)  # Enable CORS for all routes and origins
 # Google Maps API configuration
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 PLACES_API_BASE_URL = "https://maps.googleapis.com/maps/api/place"
+
+# Initialize OpenAI client
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Initialize Supabase client
 supabase: Client = create_client(
@@ -476,13 +481,19 @@ def end_trip():
 @app.route('/trip/recommendations', methods=['GET'])
 @require_auth
 def get_recommendations():
-    """Get place recommendations for a city using Google Places API"""
+    """Get AI-powered place recommendations for a city using Google Places API and OpenAI"""
     city = request.args.get('city', '').strip()
     
     if not city:
         return jsonify({"error": "Missing required parameter: city"}), 400
     
     try:
+        # Get user's previous ratings to understand preferences
+        user_id = request.user_id
+        user_ratings = supabase.table('reviews').select(
+            'place_name, rating, comment, created_at'
+        ).eq('user_id', user_id).order('created_at', desc=True).limit(20).execute()
+        
         # First, get coordinates for the city using Geocoding API
         geocoding_url = "https://maps.googleapis.com/maps/api/geocode/json"
         geocoding_params = {
@@ -506,7 +517,7 @@ def get_recommendations():
         lng = location['lng']
         formatted_address = geocoding_data['results'][0]['formatted_address']
         
-        # Search for tourist attractions in the city
+        # Search for tourist attractions in the city - fetch 25 instead of 10
         places_url = f"{PLACES_API_BASE_URL}/nearbysearch/json"
         places_params = {
             'location': f"{lat},{lng}",
@@ -525,43 +536,9 @@ def get_recommendations():
                 "details": places_data.get('error_message', 'No error details provided')
             }), 500
         
-        # Get user's friends to check for their ratings
-        user_id = request.user_id
-        friends = []
-        
-        try:
-            # Get friends where user is person_1_id
-            result1 = supabase.table('friends').select(
-                'person_2_id'
-            ).eq('person_1_id', user_id).execute()
-            
-            # Get friends where user is person_2_id
-            result2 = supabase.table('friends').select(
-                'person_1_id'
-            ).eq('person_2_id', user_id).execute()
-            
-            # Collect friend IDs
-            friend_ids = []
-            for row in result1.data:
-                friend_ids.append(row['person_2_id'])
-            for row in result2.data:
-                friend_ids.append(row['person_1_id'])
-                
-            # Get friend details (email and name) for display
-            if friend_ids:
-                friends_details = supabase.table('users').select(
-                    'id, email, name'
-                ).in_('id', friend_ids).execute()
-                
-                friends = {friend['id']: {'email': friend['email'], 'name': friend['name']} for friend in friends_details.data}
-                
-        except Exception as e:
-            # If friend lookup fails, continue without friend indicators
-            friends = {}
-        
-        # Format the recommendations
-        recommendations = []
-        for place in places_data.get('results', [])[:10]:  # Limit to 10 results
+        # Process all available attractions (up to 25)
+        all_attractions = []
+        for place in places_data.get('results', [])[:25]:
             # Map Google Places types to our categories
             place_types = place.get('types', [])
             category = 'Attraction'
@@ -578,60 +555,45 @@ def get_recommendations():
             elif any(t in place_types for t in ['landmark', 'point_of_interest']):
                 category = 'Landmark'
             
+            all_attractions.append({
+                'place_id': place.get('place_id'),
+                'name': place.get('name'),
+                'category': category,
+                'rating': place.get('rating', 0),
+                'user_ratings_total': place.get('user_ratings_total', 0),
+                'types': place_types,
+                'vicinity': place.get('vicinity', ''),
+                'photos': place.get('photos', []),
+                'location': place.get('geometry', {}).get('location', {})
+            })
+        
+        # Use OpenAI to select the best 10 attractions based on user preferences
+        selected_attractions = select_attractions_with_ai(all_attractions, user_ratings.data, city)
+        
+        # Get user's friends for friend indicators
+        friends = get_user_friends(user_id)
+        
+        # Format the final recommendations
+        recommendations = []
+        for attraction in selected_attractions:
             # Get photo URL if available
             photo_url = None
-            if place.get('photos'):
-                photo_reference = place['photos'][0]['photo_reference']
+            if attraction.get('photos'):
+                photo_reference = attraction['photos'][0]['photo_reference']
                 photo_url = f"https://maps.googleapis.com/maps/api/place/photo?maxwidth=400&photoreference={photo_reference}&key={GOOGLE_MAPS_API_KEY}"
             
-            # Check if friends liked this place (rating >= 8)
-            friends_who_liked = []
-            place_id = place.get('place_id')
-            
-            if friends and place_id:
-                try:
-                    # Get reviews for this place from friends with high ratings
-                    friend_reviews = supabase.table('reviews').select(
-                        'user_id, rating'
-                    ).eq('place_id', place_id).in_('user_id', list(friends.keys())).gte('rating', 8).execute()
-                    
-                    for review in friend_reviews.data:
-                        friend_id = review['user_id']
-                        if friend_id in friends:
-                            friend_data = friends[friend_id]
-                            # Use the name field if available, otherwise fall back to extracting from email
-                            friend_name = friend_data['name'] if friend_data['name'] else friend_data['email'].split('@')[0].title()
-                            friends_who_liked.append({
-                                'id': friend_id,
-                                'name': friend_name,
-                                'email': friend_data['email'],
-                                'rating': review['rating']
-                            })
-                            
-                except Exception as e:
-                    # If review lookup fails, continue without friend indicators
-                    pass
-            
-            # Create friend indicator text
-            friend_indicator = None
-            if friends_who_liked:
-                count = len(friends_who_liked)
-                if count == 1:
-                    friend_indicator = f"{friends_who_liked[0]['name']} liked this place"
-                elif count == 2:
-                    friend_indicator = f"{friends_who_liked[0]['name']} and {friends_who_liked[1]['name']} liked this place"
-                else:
-                    friend_indicator = f"{friends_who_liked[0]['name']} and {count - 1} others liked this place"
+            # Check for friend ratings
+            friends_who_liked, friend_indicator = get_friend_indicators(attraction['place_id'], friends)
             
             recommendation = {
-                'place_id': place_id,
-                'name': place.get('name'),
-                'description': place.get('vicinity', ''),
-                'category': category,
-                'rating': place.get('rating'),
-                'user_ratings_total': place.get('user_ratings_total'),
+                'place_id': attraction['place_id'],
+                'name': attraction['name'],
+                'description': attraction['vicinity'],
+                'category': attraction['category'],
+                'rating': attraction['rating'],
+                'user_ratings_total': attraction['user_ratings_total'],
                 'image_url': photo_url,
-                'location': place.get('geometry', {}).get('location', {}),
+                'location': attraction.get('location', {}),
                 'friends_who_liked': friends_who_liked,
                 'friend_indicator': friend_indicator
             }
@@ -649,6 +611,165 @@ def get_recommendations():
         return jsonify({"error": f"Failed to fetch recommendations: {str(e)}"}), 500
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+def select_attractions_with_ai(attractions, user_ratings, city):
+    """Use OpenAI to select the 10 best attractions based on user preferences"""
+    try:
+        # If no OpenAI key or no attractions, fall back to simple selection
+        if not os.getenv("OPENAI_API_KEY"):
+            return attractions[:10]
+        
+        if not attractions:
+            return []
+        
+        # Prepare user preference context
+        user_context = "No previous ratings available."
+        if user_ratings:
+            highly_rated = [r for r in user_ratings if r['rating'] >= 8]
+            poorly_rated = [r for r in user_ratings if r['rating'] <= 4]
+            
+            context_parts = []
+            if highly_rated:
+                context_parts.append(f"Places they loved (8+ rating): {', '.join([r['place_name'] for r in highly_rated[:5]])}")
+            if poorly_rated:
+                context_parts.append(f"Places they disliked (4- rating): {', '.join([r['place_name'] for r in poorly_rated[:3]])}")
+            
+            if context_parts:
+                user_context = ". ".join(context_parts)
+        
+        # Create attraction descriptions for OpenAI
+        attraction_list = []
+        for i, attraction in enumerate(attractions):
+            attraction_list.append(f"{i+1}. {attraction['name']} ({attraction['category']}) - Rating: {attraction['rating']}/5, {attraction['user_ratings_total']} reviews")
+        
+        prompt = f"""You are a travel recommendation expert. Based on a user's travel preferences, select the 10 best attractions from this list for {city}.
+
+User's preference history: {user_context}
+
+Available attractions:
+{chr(10).join(attraction_list)}
+
+Please select exactly 10 attractions that would best match this user's preferences. Consider their past ratings and the quality/popularity of the attractions. Return only the numbers (1-{len(attractions)}) of your selected attractions, separated by commas.
+
+Example response: 1,3,7,12,15,18,20,22,24,25"""
+        
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini-2024-07-18",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.3
+        )
+        
+        
+        # Parse OpenAI response
+        selection_text = response.choices[0].message.content.strip()
+        print(selection_text, prompt)
+        selected_indices = []
+        
+        for num in selection_text.split(','):
+            try:
+                index = int(num.strip()) - 1  # Convert to 0-based index
+                if 0 <= index < len(attractions):
+                    selected_indices.append(index)
+            except ValueError:
+                continue
+        
+        # If we don't have exactly 10 selections, fall back to top-rated
+        if len(selected_indices) != 10:
+            # Sort by rating and user_ratings_total
+            sorted_attractions = sorted(
+                enumerate(attractions), 
+                key=lambda x: (x[1]['rating'] or 0, x[1]['user_ratings_total'] or 0), 
+                reverse=True
+            )
+            selected_indices = [i for i, _ in sorted_attractions[:10]]
+        
+        # Return selected attractions in the original order
+        return [attractions[i] for i in selected_indices[:10]]
+        
+    except Exception as e:
+        # If OpenAI fails, fall back to rating-based selection
+        sorted_attractions = sorted(
+            attractions, 
+            key=lambda x: (x['rating'] or 0, x['user_ratings_total'] or 0), 
+            reverse=True
+        )
+        return sorted_attractions[:10]
+
+
+def get_user_friends(user_id):
+    """Get user's friends for friend indicators"""
+    try:
+        # Get friends where user is person_1_id
+        result1 = supabase.table('friends').select(
+            'person_2_id'
+        ).eq('person_1_id', user_id).execute()
+        
+        # Get friends where user is person_2_id
+        result2 = supabase.table('friends').select(
+            'person_1_id'
+        ).eq('person_2_id', user_id).execute()
+        
+        # Collect friend IDs
+        friend_ids = []
+        for row in result1.data:
+            friend_ids.append(row['person_2_id'])
+        for row in result2.data:
+            friend_ids.append(row['person_1_id'])
+            
+        # Get friend details (email and name) for display
+        if friend_ids:
+            friends_details = supabase.table('users').select(
+                'id, email, name'
+            ).in_('id', friend_ids).execute()
+            
+            return {friend['id']: {'email': friend['email'], 'name': friend['name']} for friend in friends_details.data}
+        
+        return {}
+        
+    except Exception as e:
+        return {}
+
+
+def get_friend_indicators(place_id, friends):
+    """Get friend indicators for a specific place"""
+    friends_who_liked = []
+    
+    if friends and place_id:
+        try:
+            # Get reviews for this place from friends with high ratings
+            friend_reviews = supabase.table('reviews').select(
+                'user_id, rating'
+            ).eq('place_id', place_id).in_('user_id', list(friends.keys())).gte('rating', 8).execute()
+            
+            for review in friend_reviews.data:
+                friend_id = review['user_id']
+                if friend_id in friends:
+                    friend_data = friends[friend_id]
+                    friend_name = friend_data['name'] if friend_data['name'] else friend_data['email'].split('@')[0].title()
+                    friends_who_liked.append({
+                        'id': friend_id,
+                        'name': friend_name,
+                        'email': friend_data['email'],
+                        'rating': review['rating']
+                    })
+                    
+        except Exception as e:
+            pass
+    
+    # Create friend indicator text
+    friend_indicator = None
+    if friends_who_liked:
+        count = len(friends_who_liked)
+        if count == 1:
+            friend_indicator = f"{friends_who_liked[0]['name']} liked this place"
+        elif count == 2:
+            friend_indicator = f"{friends_who_liked[0]['name']} and {friends_who_liked[1]['name']} liked this place"
+        else:
+            friend_indicator = f"{friends_who_liked[0]['name']} and {count - 1} others liked this place"
+    
+    return friends_who_liked, friend_indicator
 @app.route('/attractions', methods=['GET'])
 def get_attractions():
     """Get attractions near the user's location using Google Places API"""
