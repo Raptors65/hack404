@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
+import requests
 from dotenv import load_dotenv
 from functools import wraps
 from supabase import create_client, Client
@@ -9,6 +10,10 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes and origins
+
+# Google Maps API configuration
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+PLACES_API_BASE_URL = "https://maps.googleapis.com/maps/api/place"
 
 # Initialize Supabase client
 supabase: Client = create_client(
@@ -434,6 +439,166 @@ def get_recommendations():
         "city": city.title(),
         "recommendations": city_recommendations
     }), 200
+@app.route('/attractions', methods=['GET'])
+def get_attractions():
+    """Get attractions near the user's location using Google Places API"""
+    # Get location parameters from query string
+    lat = request.args.get('lat')
+    lng = request.args.get('lng')
+    radius = request.args.get('radius', '5000')  # Default 5km radius
+    type_filter = request.args.get('type', 'tourist_attraction')  # Default to tourist attractions
+    
+    # Validate required parameters
+    if not lat or not lng:
+        return jsonify({"error": "Missing required parameters: lat and lng"}), 400
+    
+    try:
+        # Convert to float for validation
+        lat = float(lat)
+        lng = float(lng)
+        radius = int(radius)
+        
+        # Validate coordinate ranges
+        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return jsonify({"error": "Invalid coordinates"}), 400
+        
+        if radius <= 0 or radius > 50000:  # Max 50km radius
+            return jsonify({"error": "Radius must be between 1 and 50000 meters"}), 400
+            
+    except ValueError:
+        return jsonify({"error": "Invalid numeric parameters"}), 400
+    
+    try:
+        # Build the Places API request URL
+        url = f"{PLACES_API_BASE_URL}/nearbysearch/json"
+        params = {
+            'location': f"{lat},{lng}",
+            'radius': radius,
+            'type': type_filter,
+            'key': GOOGLE_MAPS_API_KEY
+        }
+        
+        # Make the API request
+        response = requests.get(url, params=params)
+        response.raise_for_status()  # Raise exception for HTTP errors
+        
+        data = response.json()
+        
+        # Check if the API request was successful
+        if data.get('status') != 'OK':
+            return jsonify({
+                "error": f"Google Places API error: {data.get('status')}",
+                "details": data.get('error_message', 'No error details provided')
+            }), 500
+        
+        # Extract and format the attractions
+        attractions = []
+        for place in data.get('results', []):
+            attraction = {
+                'place_id': place.get('place_id'),
+                'name': place.get('name'),
+                'address': place.get('vicinity'),
+                'rating': place.get('rating'),
+                'user_ratings_total': place.get('user_ratings_total'),
+                'types': place.get('types', []),
+                'geometry': {
+                    'location': place.get('geometry', {}).get('location', {})
+                },
+                'photos': [
+                    {
+                        'photo_reference': photo.get('photo_reference'),
+                        'width': photo.get('width'),
+                        'height': photo.get('height')
+                    }
+                    for photo in place.get('photos', [])
+                ] if place.get('photos') else []
+            }
+            attractions.append(attraction)
+        
+        return jsonify({
+            "attractions": attractions,
+            "total_results": len(attractions),
+            "location": {"lat": lat, "lng": lng},
+            "radius": radius,
+            "type": type_filter
+        }), 200
+        
+    except requests.RequestException as e:
+        return jsonify({"error": f"Failed to fetch attractions: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+@app.route('/attraction_details', methods=['GET'])
+def get_attraction_details():
+    """Get detailed information about a specific attraction"""
+    place_id = request.args.get('place_id')
+    
+    if not place_id:
+        return jsonify({"error": "Missing required parameter: place_id"}), 400
+    
+    try:
+        # Build the Places API request URL for details
+        url = f"{PLACES_API_BASE_URL}/details/json"
+        params = {
+            'place_id': place_id,
+            'fields': 'name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,opening_hours,geometry,photos,reviews,types,price_level',
+            'key': GOOGLE_MAPS_API_KEY
+        }
+        
+        # Make the API request
+        response = requests.get(url, params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Check if the API request was successful
+        if data.get('status') != 'OK':
+            return jsonify({
+                "error": f"Google Places API error: {data.get('status')}",
+                "details": data.get('error_message', 'No error details provided')
+            }), 500
+        
+        place = data.get('result', {})
+        
+        # Format the detailed attraction data
+        attraction_details = {
+            'place_id': place.get('place_id'),
+            'name': place.get('name'),
+            'formatted_address': place.get('formatted_address'),
+            'formatted_phone_number': place.get('formatted_phone_number'),
+            'website': place.get('website'),
+            'rating': place.get('rating'),
+            'user_ratings_total': place.get('user_ratings_total'),
+            'price_level': place.get('price_level'),
+            'types': place.get('types', []),
+            'geometry': place.get('geometry', {}),
+            'opening_hours': place.get('opening_hours', {}),
+            'photos': [
+                {
+                    'photo_reference': photo.get('photo_reference'),
+                    'width': photo.get('width'),
+                    'height': photo.get('height')
+                }
+                for photo in place.get('photos', [])
+            ] if place.get('photos') else [],
+            'reviews': [
+                {
+                    'author_name': review.get('author_name'),
+                    'rating': review.get('rating'),
+                    'relative_time_description': review.get('relative_time_description'),
+                    'text': review.get('text')
+                }
+                for review in place.get('reviews', [])
+            ] if place.get('reviews') else []
+        }
+        
+        return jsonify({"attraction": attraction_details}), 200
+        
+    except requests.RequestException as e:
+        return jsonify({"error": f"Failed to fetch attraction details: {str(e)}"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
 
 @app.route('/health', methods=['GET'])
