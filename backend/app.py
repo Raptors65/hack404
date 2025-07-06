@@ -991,6 +991,81 @@ def get_user_reviewed_places():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/trip/past', methods=['GET'])
+@require_auth
+def get_past_trips():
+    """Get all completed trips for the user"""
+    user_id = request.user_id
+    
+    try:
+        # Get all completed trips for the user (is_active = False)
+        result = supabase.table('trips').select(
+            'id, city, country, start_date, end_date, created_at'
+        ).eq('user_id', user_id).eq('is_active', False).order(
+            'end_date', desc=True
+        ).execute()
+        
+        past_trips = []
+        for trip in result.data:
+            # Get reviews for this trip (reviews created between start and end dates)
+            reviews_query = supabase.table('reviews').select(
+                'id, rating', count='exact'
+            ).eq('user_id', user_id)
+            
+            if trip.get('start_date') and trip.get('end_date'):
+                reviews_query = reviews_query.gte(
+                    'created_at', trip['start_date']
+                ).lte('created_at', trip['end_date'])
+            elif trip.get('start_date'):
+                # If no end_date, use trip creation time + 1 day as fallback
+                from datetime import datetime, timedelta
+                start_time = datetime.fromisoformat(trip['start_date'].replace('Z', '+00:00'))
+                end_time = start_time + timedelta(days=1)
+                reviews_query = reviews_query.gte(
+                    'created_at', trip['start_date']
+                ).lte('created_at', end_time.isoformat())
+            
+            reviews_result = reviews_query.execute()
+            review_count = reviews_result.count if reviews_result.count else 0
+            
+            # Calculate average rating for this trip
+            average_rating = None
+            if reviews_result.data and len(reviews_result.data) > 0:
+                ratings = [review['rating'] for review in reviews_result.data if review.get('rating')]
+                if ratings:
+                    average_rating = round(sum(ratings) / len(ratings), 1)
+            
+            # Calculate trip duration
+            duration_days = None
+            if trip.get('start_date') and trip.get('end_date'):
+                try:
+                    start_date = datetime.fromisoformat(trip['start_date'].replace('Z', '+00:00'))
+                    end_date = datetime.fromisoformat(trip['end_date'].replace('Z', '+00:00'))
+                    duration_days = (end_date - start_date).days + 1  # +1 to include the start day
+                except:
+                    duration_days = None
+            
+            past_trips.append({
+                'id': trip['id'],
+                'city': trip['city'],
+                'country': trip['country'],
+                'start_date': trip['start_date'],
+                'end_date': trip['end_date'],
+                'created_at': trip['created_at'],
+                'review_count': review_count,
+                'duration_days': duration_days,
+                'average_rating': average_rating
+            })
+        
+        return jsonify({
+            'past_trips': past_trips,
+            'total_trips': len(past_trips)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint"""
