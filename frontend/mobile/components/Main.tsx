@@ -1,5 +1,5 @@
 import React from 'react'
-import { View, Text, StyleSheet } from 'react-native'
+import { View, Text, StyleSheet, Image } from 'react-native'
 import { Session } from '@supabase/supabase-js'
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs'
 import Icon from 'react-native-vector-icons/Ionicons'
@@ -22,7 +22,11 @@ export default function Main({ session }: MainProps) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Wander</Text>
+        <Image 
+          source={require('../assets/wander-logo.png')} 
+          style={styles.logo}
+          resizeMode="contain"
+        />
       </View>
       
       <Tab.Navigator
@@ -96,10 +100,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E5E5EA',
   },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-    textAlign: 'center',
+  logo: {
+    height: 40,
+    width: undefined,
+    aspectRatio: undefined,
+    alignSelf: 'center',
   },
 })

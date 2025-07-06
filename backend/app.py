@@ -59,6 +59,8 @@ def add_review():
     place_name = data.get('place_name')
     rating = data.get('rating')
     comment = data.get('comment')
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
 
     # Validate required fields
     if not all([review_id, place_id, place_name, rating]):
@@ -68,16 +70,33 @@ def add_review():
     if not isinstance(rating, int) or rating < 1 or rating > 10:
         return jsonify({"error": "Rating must be an integer between 1 and 10"}), 400
 
+    # Validate coordinates if provided
+    if latitude is not None and longitude is not None:
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+            if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+                return jsonify({"error": "Invalid coordinates"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid coordinate format"}), 400
+
     try:
         # Use Supabase SDK to insert review
-        result = supabase.table('reviews').insert({
+        review_data = {
             'review_id': review_id,
             'user_id': user_id,
             'place_id': place_id,
             'place_name': place_name,
             'rating': rating,
             'comment': comment
-        }).execute()
+        }
+        
+        # Add coordinates if provided
+        if latitude is not None and longitude is not None:
+            review_data['latitude'] = latitude
+            review_data['longitude'] = longitude
+        
+        result = supabase.table('reviews').insert(review_data).execute()
         
         return jsonify({"message": "Review added successfully", "data": result.data}), 201
     except Exception as e:
@@ -94,6 +113,8 @@ def rate_place():
     place_name = data.get('place_name')  # Place name from frontend
     rating = data.get('rating')
     comment = data.get('comment', '')  # Optional comment
+    latitude = data.get('latitude')
+    longitude = data.get('longitude')
     
     # Validate required fields
     if not all([place_id, place_name, rating]):
@@ -102,6 +123,16 @@ def rate_place():
     # Validate rating range
     if not isinstance(rating, int) or rating < 1 or rating > 10:
         return jsonify({"error": "Rating must be an integer between 1 and 10"}), 400
+    
+    # Validate coordinates if provided
+    if latitude is not None and longitude is not None:
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+            if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
+                return jsonify({"error": "Invalid coordinates"}), 400
+        except (ValueError, TypeError):
+            return jsonify({"error": "Invalid coordinate format"}), 400
     
     try:
         # Check if user already rated this place
@@ -112,11 +143,18 @@ def rate_place():
         if existing_review.data:
             # Update existing review
             review_id = existing_review.data[0]['review_id']
-            result = supabase.table('reviews').update({
+            update_data = {
                 'rating': rating,
                 'comment': comment,
                 'place_name': place_name
-            }).eq('review_id', review_id).execute()
+            }
+            
+            # Add coordinates if provided
+            if latitude is not None and longitude is not None:
+                update_data['latitude'] = latitude
+                update_data['longitude'] = longitude
+            
+            result = supabase.table('reviews').update(update_data).eq('review_id', review_id).execute()
             
             return jsonify({
                 "message": "Rating updated successfully",
@@ -127,14 +165,21 @@ def rate_place():
             # Create new review with generated review_id
             review_id = str(uuid.uuid4())
             
-            result = supabase.table('reviews').insert({
+            review_data = {
                 'review_id': review_id,
                 'user_id': user_id,
                 'place_id': place_id,
                 'place_name': place_name,
                 'rating': rating,
                 'comment': comment
-            }).execute()
+            }
+            
+            # Add coordinates if provided
+            if latitude is not None and longitude is not None:
+                review_data['latitude'] = latitude
+                review_data['longitude'] = longitude
+            
+            result = supabase.table('reviews').insert(review_data).execute()
             
             return jsonify({
                 "message": "Rating added successfully",
@@ -906,6 +951,40 @@ def get_feed():
             'featured_lists': featured_lists,
             'friend_activity': friend_activity[:15],  # Limit to 15 most recent activities
             'total_activities': len(friend_activity)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/user/reviewed-places', methods=['GET'])
+@require_auth
+def get_user_reviewed_places():
+    """Get all places the user has reviewed with coordinates for map display"""
+    user_id = request.user_id
+    
+    try:
+        # Get all reviews by the user that have coordinates
+        result = supabase.table('reviews').select(
+            'place_id, place_name, rating, comment, latitude, longitude, created_at'
+        ).eq('user_id', user_id).not_.is_('latitude', 'null').not_.is_('longitude', 'null').execute()
+        
+        # Format the places for map display
+        reviewed_places = []
+        for review in result.data:
+            reviewed_places.append({
+                'place_id': review['place_id'],
+                'place_name': review['place_name'],
+                'rating': review['rating'],
+                'comment': review['comment'],
+                'latitude': float(review['latitude']),
+                'longitude': float(review['longitude']),
+                'created_at': review['created_at']
+            })
+        
+        return jsonify({
+            'places': reviewed_places,
+            'total_places': len(reviewed_places)
         }), 200
         
     except Exception as e:
