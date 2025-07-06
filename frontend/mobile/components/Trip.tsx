@@ -104,7 +104,7 @@ export default function Trip() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch('http://127.0.0.1:5001/trip/current', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/trip/current`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -136,7 +136,7 @@ export default function Trip() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch(`http://127.0.0.1:5001/trip/recommendations?city=${encodeURIComponent(city)}`, {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/trip/recommendations?city=${encodeURIComponent(city)}`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -151,7 +151,7 @@ export default function Trip() {
           (result.recommendations || []).map(async (rec: Recommendation) => {
             try {
               // Check if user has already rated this place
-              const userRatingResponse = await fetch(`http://127.0.0.1:5001/get_user_rating?place_id=${encodeURIComponent(rec.place_id)}`, {
+              const userRatingResponse = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/get_user_rating?place_id=${encodeURIComponent(rec.place_id)}`, {
                 method: 'GET',
                 headers: {
                   'Content-Type': 'application/json',
@@ -189,7 +189,7 @@ export default function Trip() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch('http://127.0.0.1:5001/trip/start', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/trip/start`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -225,7 +225,7 @@ export default function Trip() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch('http://127.0.0.1:5001/trip/end', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/trip/end`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -290,7 +290,7 @@ export default function Trip() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch('http://127.0.0.1:5001/rate_place', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/rate_place`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

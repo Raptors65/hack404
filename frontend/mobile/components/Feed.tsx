@@ -52,7 +52,7 @@ export default function Feed() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch('http://127.0.0.1:5001/feed', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/feed`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',

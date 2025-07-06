@@ -37,7 +37,7 @@ export default function Profile({ session }: ProfileProps) {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const response = await fetch('http://127.0.0.1:5001/friends', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/friends`, {
         method: 'GET',
         headers: {
           'Content-Type': 'application/json',
@@ -80,7 +80,7 @@ export default function Profile({ session }: ProfileProps) {
         return
       }
 
-      const response = await fetch('http://127.0.0.1:5001/add_friend', {
+      const response = await fetch(`${process.env.EXPO_PUBLIC_BACKEND_URL}/add_friend`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
