@@ -224,6 +224,218 @@ def get_friends():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/trip/current', methods=['GET'])
+@require_auth
+def get_current_trip():
+    """Get the user's current active trip"""
+    user_id = request.user_id
+    
+    try:
+        # Get the current active trip for the user
+        result = supabase.table('trips').select(
+            'id, city, country, start_date, created_at'
+        ).eq('user_id', user_id).eq('is_active', True).execute()
+        
+        if result.data:
+            trip = result.data[0]
+            return jsonify({
+                "has_active_trip": True,
+                "trip": {
+                    "id": trip['id'],
+                    "city": trip['city'],
+                    "country": trip['country'],
+                    "start_date": trip['start_date'],
+                    "created_at": trip['created_at']
+                }
+            }), 200
+        else:
+            return jsonify({"has_active_trip": False}), 200
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/trip/start', methods=['POST'])
+@require_auth
+def start_trip():
+    """Start a new trip (end any existing active trip first)"""
+    user_id = request.user_id
+    data = request.get_json()
+    
+    city = data.get('city')
+    country = data.get('country')
+    
+    if not city:
+        return jsonify({"error": "City is required"}), 400
+    
+    try:
+        # End any existing active trip
+        supabase.table('trips').update({
+            'is_active': False,
+            'end_date': 'now()'
+        }).eq('user_id', user_id).eq('is_active', True).execute()
+        
+        # Start new trip
+        result = supabase.table('trips').insert({
+            'user_id': user_id,
+            'city': city,
+            'country': country,
+            'is_active': True
+        }).execute()
+        
+        if result.data:
+            trip = result.data[0]
+            return jsonify({
+                "message": "Trip started successfully",
+                "trip": {
+                    "id": trip['id'],
+                    "city": trip['city'],
+                    "country": trip['country'],
+                    "start_date": trip['start_date'],
+                    "created_at": trip['created_at']
+                }
+            }), 201
+        else:
+            return jsonify({"error": "Failed to create trip"}), 500
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/trip/end', methods=['PUT'])
+@require_auth
+def end_trip():
+    """End the current active trip"""
+    user_id = request.user_id
+    
+    try:
+        # End the current active trip
+        result = supabase.table('trips').update({
+            'is_active': False,
+            'end_date': 'now()'
+        }).eq('user_id', user_id).eq('is_active', True).execute()
+        
+        if result.data:
+            return jsonify({"message": "Trip ended successfully"}), 200
+        else:
+            return jsonify({"error": "No active trip found"}), 404
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/trip/recommendations', methods=['GET'])
+@require_auth
+def get_recommendations():
+    """Get place recommendations for a city (hardcoded for now)"""
+    city = request.args.get('city', '').lower()
+    
+    # Hardcoded recommendations for common cities
+    recommendations = {
+        'new york': [
+            {
+                'name': 'Central Park',
+                'description': 'Beautiful urban park in the heart of Manhattan',
+                'category': 'Park',
+                'rating': 4.8,
+                'image_url': 'https://images.unsplash.com/photo-1520637836862-4d197d17c91a?w=300&h=200&fit=crop'
+            },
+            {
+                'name': 'Times Square',
+                'description': 'Famous commercial intersection and tourist destination',
+                'category': 'Landmark',
+                'rating': 4.2,
+                'image_url': 'https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?w=300&h=200&fit=crop'
+            },
+            {
+                'name': 'Brooklyn Bridge',
+                'description': 'Historic bridge connecting Manhattan and Brooklyn',
+                'category': 'Landmark',
+                'rating': 4.7,
+                'image_url': 'https://images.unsplash.com/photo-1559827260-dc66d52bef19?w=300&h=200&fit=crop'
+            }
+        ],
+        'paris': [
+            {
+                'name': 'Eiffel Tower',
+                'description': 'Iconic iron lattice tower and symbol of Paris',
+                'category': 'Landmark',
+                'rating': 4.6,
+                'image_url': 'https://images.unsplash.com/photo-1511739001486-6bfe10ce785f?w=300&h=200&fit=crop'
+            },
+            {
+                'name': 'Louvre Museum',
+                'description': 'World famous art museum and historic monument',
+                'category': 'Museum',
+                'rating': 4.8,
+                'image_url': 'https://images.unsplash.com/photo-1566139884294-a7e1ccb6e8c6?w=300&h=200&fit=crop'
+            },
+            {
+                'name': 'Notre-Dame Cathedral',
+                'description': 'Medieval Catholic cathedral and architectural masterpiece',
+                'category': 'Architecture',
+                'rating': 4.7,
+                'image_url': 'https://images.unsplash.com/photo-1539650116574-75c0c6d0e66b?w=300&h=200&fit=crop'
+            }
+        ],
+        'tokyo': [
+            {
+                'name': 'Senso-ji Temple',
+                'description': 'Ancient Buddhist temple in Asakusa',
+                'category': 'Temple',
+                'rating': 4.5,
+                'image_url': 'https://images.unsplash.com/photo-1545569341-9eb8b30979d9?w=300&h=200&fit=crop'
+            },
+            {
+                'name': 'Shibuya Crossing',
+                'description': 'Busiest pedestrian crossing in the world',
+                'category': 'Landmark',
+                'rating': 4.3,
+                'image_url': 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?w=300&h=200&fit=crop'
+            },
+            {
+                'name': 'Tokyo Skytree',
+                'description': 'Broadcasting tower and observation deck',
+                'category': 'Landmark',
+                'rating': 4.4,
+                'image_url': 'https://images.unsplash.com/photo-1513407030348-c983a97b98d8?w=300&h=200&fit=crop'
+            }
+        ]
+    }
+    
+    # Default recommendations if city not found
+    default_recommendations = [
+        {
+            'name': 'City Center',
+            'description': 'Explore the heart of the city',
+            'category': 'Area',
+            'rating': 4.2,
+            'image_url': 'https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=300&h=200&fit=crop'
+        },
+        {
+            'name': 'Local Market',
+            'description': 'Experience local culture and cuisine',
+            'category': 'Market',
+            'rating': 4.5,
+            'image_url': 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=300&h=200&fit=crop'
+        },
+        {
+            'name': 'Historic District',
+            'description': 'Discover the city\'s rich history',
+            'category': 'Historic',
+            'rating': 4.3,
+            'image_url': 'https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=300&h=200&fit=crop'
+        }
+    ]
+    
+    city_recommendations = recommendations.get(city, default_recommendations)
+    
+    return jsonify({
+        "city": city.title(),
+        "recommendations": city_recommendations
+    }), 200
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Simple health check endpoint"""
