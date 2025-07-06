@@ -28,6 +28,7 @@ interface FriendActivity {
   created_at: string
   // Review specific fields
   place_id?: string
+  place_name?: string
   rating?: number
   comment?: string
   // Trip specific fields
@@ -115,7 +116,7 @@ export default function Feed() {
           </View>
           <View style={styles.activityContent}>
             <Text style={styles.activityText}>
-              Rated a place {activity.rating}/10
+              Rated {activity.place_name || 'a place'} {activity.rating}/10
             </Text>
             {activity.comment && (
               <Text style={styles.activityComment}>"{activity.comment}"</Text>

@@ -1,0 +1,1 @@
+ALTER TABLE public.reviews ADD COLUMN place_name TEXT; -- to save on requests later

@@ -56,12 +56,13 @@ def add_review():
     # Use authenticated user_id instead of accepting it from request
     user_id = request.user_id
     place_id = data.get('place_id')
+    place_name = data.get('place_name')
     rating = data.get('rating')
     comment = data.get('comment')
 
     # Validate required fields
-    if not all([review_id, place_id, rating]):
-        return jsonify({"error": "Missing required fields: review_id, place_id, rating"}), 400
+    if not all([review_id, place_id, place_name, rating]):
+        return jsonify({"error": "Missing required fields: review_id, place_id, place_name, rating"}), 400
 
     # Validate rating range
     if not isinstance(rating, int) or rating < 1 or rating > 10:
@@ -73,6 +74,7 @@ def add_review():
             'review_id': review_id,
             'user_id': user_id,
             'place_id': place_id,
+            'place_name': place_name,
             'rating': rating,
             'comment': comment
         }).execute()
@@ -89,12 +91,13 @@ def rate_place():
     data = request.get_json()
     user_id = request.user_id
     place_id = data.get('place_id')
+    place_name = data.get('place_name')  # Place name from frontend
     rating = data.get('rating')
     comment = data.get('comment', '')  # Optional comment
     
     # Validate required fields
-    if not all([place_id, rating]):
-        return jsonify({"error": "Missing required fields: place_id, rating"}), 400
+    if not all([place_id, place_name, rating]):
+        return jsonify({"error": "Missing required fields: place_id, place_name, rating"}), 400
     
     # Validate rating range
     if not isinstance(rating, int) or rating < 1 or rating > 10:
@@ -111,7 +114,8 @@ def rate_place():
             review_id = existing_review.data[0]['review_id']
             result = supabase.table('reviews').update({
                 'rating': rating,
-                'comment': comment
+                'comment': comment,
+                'place_name': place_name
             }).eq('review_id', review_id).execute()
             
             return jsonify({
@@ -127,6 +131,7 @@ def rate_place():
                 'review_id': review_id,
                 'user_id': user_id,
                 'place_id': place_id,
+                'place_name': place_name,
                 'rating': rating,
                 'comment': comment
             }).execute()
@@ -797,7 +802,7 @@ def get_feed():
             
             # Get recent reviews from friends (last 30 days)
             recent_reviews = supabase.table('reviews').select(
-                'user_id, place_id, rating, comment, created_at'
+                'user_id, place_id, place_name, rating, comment, created_at'
             ).in_('user_id', friend_ids).gte(
                 'created_at', thirty_days_ago
             ).order('created_at', desc=True).limit(20).execute()
@@ -831,6 +836,7 @@ def get_feed():
                             'user_name': friend_name,
                             'user_email': user_data['email'],
                             'place_id': review['place_id'],
+                            'place_name': review.get('place_name', 'Unknown Place'),
                             'rating': review['rating'],
                             'comment': review['comment'],
                             'created_at': review['created_at']

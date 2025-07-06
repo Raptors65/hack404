@@ -298,6 +298,7 @@ export default function Trip() {
         },
         body: JSON.stringify({
           place_id: selectedPlace.place_id,
+          place_name: selectedPlace.name,
           rating: userRating,
           comment: userComment
         }),
